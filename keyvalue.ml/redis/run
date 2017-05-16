@@ -1,9 +1,12 @@
 #!/bin/bash
 
-echo '...Starting Webdis...'
+if [ ! -f ~/data ]; then
+  cd ~ && ln -s /root/volumes/source.ml/keyvalue.ml/redis/data
+  chmod a+w data/dump.rdb
+fi
+
 cd ~/webdis
 ./webdis webdis.json &
 
-echo '...Starting Redis...'
 cd ~
 redis-server config/redis.conf

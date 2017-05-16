@@ -1,4 +1,4 @@
-FROM fluxcapacitor/package-ubuntu-14.04
+FROM fluxcapacitor/package-ubuntu-16.04:master
 
 ENV \
   DYNO_VERSION=1.4.7 \
@@ -37,7 +37,7 @@ RUN \
  && autoreconf -fvi \
  && CFLAGS="-ggdb3 -O0" ./configure --enable-debug=full \
  && make \
- && sudo make install
+ && make install
 
 # Expose Redis Port
 EXPOSE 6379
@@ -50,5 +50,11 @@ EXPOSE 8101 8102 8105 22122 22222
 
 COPY run run
 COPY config/ config/
+
+# Relying on source.ml
+#COPY data/dump.rdb data/dump.rdb
+
+#RUN \
+#  chmod a+w data/dump.rdb
 
 CMD ["supervise", "."]

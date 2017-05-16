@@ -1,11 +1,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: zeppelin-master
+  name: zeppelin
+  labels:
+    app: zeppelin
+#    dns: route53
+#  annotations:
+#    domainName: zeppelin.your.domain.com
 spec:
   type: LoadBalancer
   ports:
-    # the port that this service should serve on
   - name: "http"
     port: 80 
     targetPort: 3123 
@@ -13,4 +17,4 @@ spec:
     port: 81 
     targetPort: 3124
   selector:
-    name: zeppelin-master
+    app: zeppelin

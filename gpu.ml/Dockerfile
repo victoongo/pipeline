@@ -1,150 +1,231 @@
-FROM nvidia/cuda:8.0-cudnn5-devel
-
-ENV \
-  TENSORFLOW_VERSION=1.0
-  
-# Adapted from 
-#   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/tools/docker/Dockerfile.devel-gpu
-
-# TODO: Add the Nvidia CUDA Profile Tools Interface
-#RUN \
-#  sudo apt-get install libcupti-dev
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        curl \
-        git \
-        libcurl3-dev \
-        libfreetype6-dev \
-        libpng12-dev \
-        libzmq3-dev \
-        pkg-config \
-        python-dev \
-        rsync \
-        software-properties-common \
-        unzip \
-        zip \
-        zlib1g-dev \
-        && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN curl -fSsL -O https://bootstrap.pypa.io/get-pip.py && \
-    python get-pip.py && \
-    rm get-pip.py
-
-RUN pip --no-cache-dir install \
-        ipykernel \
-        jupyter \
-        matplotlib \
-        numpy \
-        scipy \
-        sklearn \
-        && \
-    python -m ipykernel.kernelspec
-
-# Jupyter has issues with being run directly:
-#   https://github.com/ipython/ipython/issues/7062
-# We just add a little wrapper script.
-COPY run_jupyter.sh /
-
-# Setup Java (used by Bazel)
-
-# We need to add a custom PPA to pick up JDK8, since trusty doesn't
-# have an openjdk8 backport.  openjdk-r is maintained by a reliable contributor:
-# Matthias Klose (https://launchpad.net/~doko).  It will do until
-# we either update the base image beyond 14.04 or openjdk-8 is
-# finally backported to trusty; see e.g.
-#   https://bugs.launchpad.net/trusty-backports/+bug/1368094
-RUN add-apt-repository -y ppa:openjdk-r/ppa && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends openjdk-8-jdk openjdk-8-jre-headless && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Set up Bazel.
-
-# Running bazel inside a `docker build` command causes trouble, cf:
-#   https://github.com/bazelbuild/bazel/issues/134
-# The easiest solution is to set up a bazelrc file forcing --batch.
-RUN echo "startup --batch" >>/root/.bazelrc
-# Similarly, we need to workaround sandboxing issues:
-#   https://github.com/bazelbuild/bazel/issues/418
-RUN echo "build --spawn_strategy=standalone --genrule_strategy=standalone" \
-    >>/root/.bazelrc
-ENV BAZELRC /root/.bazelrc
-# Install the most recent bazel release.
-ENV BAZEL_VERSION 0.4.4
-WORKDIR /
-RUN mkdir /bazel && \
-    cd /bazel && \
-    curl -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \
-    curl -fSsL -o /bazel/LICENSE.txt https://raw.githubusercontent.com/bazelbuild/bazel/master/LICENSE.txt && \
-    chmod +x bazel-*.sh && \
-    ./bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \
-    cd / && \
-    rm -f /bazel/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh
-
-# Download and build TensorFlow.
-
-RUN git clone -b r$TENSORFLOW_VERSION --recursive --recurse-submodules https://github.com/tensorflow/tensorflow.git && \
-    cd tensorflow && \
-    git checkout r$TENSORFLOW_VERSION
-
-WORKDIR /tensorflow
-
-# Configure the build for our CUDA configuration.
-ENV CI_BUILD_PYTHON python
-ENV LD_LIBRARY_PATH /usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
-ENV TF_NEED_CUDA 1
-
-# Check the required COMPUTE_CAPABILITIES from the following link:
-#  https://developer.nvidia.com/cuda-gpus
-# Also, Tensorflow has a minimum-supported COMPUTE CAPABILITY (ie. 3.5)
-# ie. here are the AWS EC2 Instance Types and their COMPUTE CAPABILITIES
-#
-## AWS P2 Instances (3.7)
-# Product Type  Tesla
-# Product Series  K-Series
-# Product  K-80
-# Operating System  Linux 64-bit
-# Recommended/Beta  Recommended/Certified
-#
-## G2 Instances (3.5)
-# Product Type  GRID
-# Product Series  GRID Series
-# Product  GRID K520
-# Operating System  Linux 64-bit
-# Recommended/Beta  Recommended/Certified
-#
-## CG1 Instances (3.0)
-# Product Type  Tesla
-# Product Series  M-Class
-# Product  M2050
-# Operating System  Linux 64-bit
-# Recommended/Beta  Recommended/Certified
-#
-ENV TF_CUDA_COMPUTE_CAPABILITIES=3.0,3.5,3.7,5.2
-
-RUN tensorflow/tools/ci_build/builds/configured GPU \
-    bazel build -c opt --config=cuda tensorflow/tools/pip_package:build_pip_package && \
-    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/pip && \
-    pip --no-cache-dir install --upgrade /tmp/pip/tensorflow-*.whl && \
-    rm -rf /tmp/pip && \
-    rm -rf /root/.cache
-# Clean up pip wheel and Bazel cache when done.
+#FROM fluxcapacitor/package-tensorflow-2a48110-4d0a571-gpu:master
+# Changing to -no-avx mode as we might end up on cloud instance hardware that does not support avx.
+# TensorFlow crashes in this case.
+FROM fluxcapacitor/package-tensorflow-2a48110-4d0a571-gpu-no-avx:master
 
 WORKDIR /root
 
-# TensorBoard
-EXPOSE 6006
+# Based on the following:  https://github.com/jupyterhub/jupyterhub/blob/master/Dockerfile
 
-# Jupyter 
-EXPOSE 8754 
+# install nodejs, utf8 locale
+ENV DEBIAN_FRONTEND noninteractive
 
-# Set up our notebook config.
-COPY jupyter_notebook_config.py /root/.jupyter/
-# Copy our examples
-COPY examples/ examples/
+RUN apt-get -y update && \
+    apt-get -y upgrade && \
+    apt-get -y install npm nodejs nodejs-legacy wget locales git
 
-RUN ["/bin/bash"]
+# libav-tools for matplotlib anim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libav-tools && \
+    apt-get clean
+#    rm -rf /var/lib/apt/lists/*
+
+# Install JupyterHub dependencies
+RUN npm install -g configurable-http-proxy && rm -rf ~/.npm
+
+RUN \
+  conda install --yes -c conda-forge jupyterhub==0.7.2 \
+  && conda install --yes ipykernel==4.6.0 \
+  && conda install --yes notebook==5.0.0 \
+  && conda install --yes -c conda-forge jupyter_contrib_nbextensions==0.2.7 \
+  && conda install --yes ipywidgets==6.0.0 \
+  && conda install --yes -c anaconda-nb-extensions anaconda-nb-extensions==1.0.0 \
+  && conda install --yes -c conda-forge findspark==1.0.0
+
+RUN \
+  pip install jupyterlab==0.19.0 \
+  && pip install jupyterlab_widgets==0.6.15 \
+  && pip install widgetslabextension==0.1.0
+
+RUN \
+  jupyter labextension install --sys-prefix --py jupyterlab_widgets \
+  && jupyter labextension enable --sys-prefix --py jupyterlab_widgets \
+  && jupyter serverextension enable --py jupyterlab --sys-prefix
+
+# Install non-secure dummyauthenticator for jupyterhub (dev purposes only)
+RUN \
+  pip install jupyterhub-dummyauthenticator==0.1
+
+RUN \
+  pip install jupyterhub-simplespawner==0.1
+
+RUN \
+  conda install --yes nbconvert==5.1.1 \
+  && conda install --yes graphviz==2.38.0 \
+  && conda install --yes seaborn==0.7.1
+
+RUN \
+  pip install grpcio \
+  && pip install git+https://github.com/wiliamsouza/hystrix-py.git
+
+# Spark
+ENV \
+  SPARK_VERSION=2.1.0 \
+  PYSPARK_VERSION=0.10.4
+
+RUN \
+  # This is not a custom version of Spark.  It's merely a version with all the desired -P profiles enabled.
+  wget https://s3.amazonaws.com/fluxcapacitor.com/packages/spark-${SPARK_VERSION}-bin-fluxcapacitor.tgz \
+  && tar xvzf spark-${SPARK_VERSION}-bin-fluxcapacitor.tgz \
+  && rm spark-${SPARK_VERSION}-bin-fluxcapacitor.tgz
+
+ENV \
+  SPARK_HOME=/root/spark-${SPARK_VERSION}-bin-fluxcapacitor
+
+# This must be separate from the ${SPARK_HOME} ENV definition or else Docker doesn't recognize it
+ENV \
+  PATH=${SPARK_HOME}/bin:$PATH
+
+RUN \
+  git clone https://github.com/fluxcapacitor/pipeline.git
+
+RUN \
+  ln -s pipeline/gpu.ml/src \
+  && ln -s pipeline/gpu.ml/notebooks \
+  && mkdir -p /root/.ipython \
+  && cd /root/.ipython \
+  && ln -s pipeline/gpu.ml/profiles \
+  && cd ~ \
+  && ln -s pipeline/gpu.ml/config \
+  && ln -s pipeline/gpu.ml/html \
+  && ln -s pipeline/gpu.ml/run  \
+  && ln -s pipeline/gpu.ml/lib \
+  && ln -s pipeline/gpu.ml/apache-jmeter-3.1 \
+  && ln -s pipeline/gpu.ml/tests \
+  && ln -s pipeline/gpu.ml/datasets \
+  && ln -s pipeline/gpu.ml/scripts
+
+# Hadoop/HDFS
+ENV \
+  HADOOP_VERSION=2.7.2
+
+RUN \
+ wget http://www.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz \
+ && tar xvzf hadoop-${HADOOP_VERSION}.tar.gz \
+ && rm hadoop-${HADOOP_VERSION}.tar.gz
+
+ENV \
+  HADOOP_HOME=/root/hadoop-${HADOOP_VERSION} \
+  HADOOP_OPTS=-Djava.net.preferIPv4Stack=true
+
+# This must be separate from the ${HADOOP_HOME} ENV definition or else Docker doesn't recognize it
+ENV \
+  HADOOP_CONF=${HADOOP_HOME}/etc/hadoop/ \
+  PATH=${HADOOP_HOME}/bin:${HADOOP_HOME}/sbin:${PATH}
+
+# Required by Tensorflow
+ENV \
+  HADOOP_HDFS_HOME=${HADOOP_HOME}
+
+# Required by Tensorflow for HDFS
+#RUN \
+#  echo 'export CLASSPATH=$(${HADOOP_HDFS_HOME}/bin/hadoop classpath --glob)' >> /root/.bashrc
+
+#RUN \
+#  echo 'CLASSPATH=$(${HADOOP_HDFS_HOME}/bin/hadoop classpath --glob)' >> /etc/environment
+
+ENV \
+  LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${JAVA_HOME}/jre/lib/amd64/server
+
+# Required by Spark
+ENV \
+  HADOOP_CONF_DIR=${HADOOP_CONF}
+
+RUN \
+  cd ${SPARK_HOME}/conf \
+  && ln -s /root/config/spark/core-site.xml \
+  && ln -s /root/config/spark/fairscheduler.xml \
+  && ln -s /root/config/spark/hdfs-site.xml \
+  && ln -s /root/config/spark/hive-site.xml \
+  && ln -s /root/config/spark/spark-defaults.conf
+
+RUN \
+  mv ${HADOOP_CONF}/core-site.xml ${HADOOP_CONF}/core-site.xml.orig \
+  && cd ${HADOOP_CONF} \
+  && ln -s /root/config/hadoop/core-site.xml
+
+RUN \
+  mv ${HADOOP_CONF}/hdfs-site.xml ${HADOOP_CONF}/hdfs-site.xml.orig \
+  && cd ${HADOOP_CONF} \
+  && ln -s /root/config/hadoop/hdfs-site.xml
+
+RUN \
+  apt-get update \
+  && apt-get install -y ssh
+
+RUN \
+  sed -i s/#PermitRootLogin.*/PermitRootLogin\ yes/ /etc/ssh/sshd_config \
+  && sed -i s/#.*StrictHostKeyChecking.*/StrictHostKeyChecking\ no/ /etc/ssh/ssh_config \
+  && ssh-keygen -A \
+  && ssh-keygen -t rsa -f /root/.ssh/id_rsa -q -N "" \
+  && cat /root/.ssh/id_rsa.pub > /root/.ssh/authorized_keys
+
+RUN \
+  sed -i "s%<HADOOP_HOME>%${HADOOP_HOME}%" ${HADOOP_CONF}/*.xml \
+  && sed -i "s%\${JAVA_HOME}%${JAVA_HOME}%" ${HADOOP_CONF}/hadoop-env.sh
+
+RUN \
+  hadoop namenode -format
+
+# Hue (port 8000)
+#RUN \
+#  wget https://dl.dropboxusercontent.com/u/730827/hue/releases/3.12.0/hue-3.12.0.tgz \
+#  && tar xvzf hue-3.12.0.tgz \
+#  && rm hue-3.12.0.tgz
+
+# Required by sshd
+RUN \
+  mkdir /var/run/sshd
+
+RUN \
+  cd ~/lib/jni \
+  && ln -s ~/lib/jni/libtensorflow_jni-gpu.so libtensorflow_jni.so
+
+ENV \
+  TF_CPP_MIN_LOG_LEVEL=0 \
+  TF_XLA_FLAGS=--xla_generate_hlo_graph=.*
+
+ENV \
+  PATH=$TENSORFLOW_HOME/bazel-bin/tensorflow/tools/graph_transforms:$TENSORFLOW_HOME/bazel-bin/tensorflow/python/tools:$TENSORFLOW_HOME/bazel-bin/tensorflow/tools/benchmark/:$TENSORFLOW_HOME/bazel-bin/tensorflow/compiler/aot:$TENSORFLOW_HOME/bazel-bin/tensorflow/compiler/tests:$TENSORFLOW_HOME/bazel-bin/tensorflow/examples/tutorials/word2vec:$TENSORFLOW_HOME/bazel-bin/tensorflow/examples/tutorials/mnist:/root/apache-jmeter-3.1/bin/:/root/scripts:$PATH
+
+RUN \
+  conda install --yes graphviz \
+  && conda install --yes -c numba cudatoolkit==8.0 \
+  && conda install --yes -c numba numba==0.33
+
+RUN \
+  mkdir -p /root/tensorboard
+
+RUN \
+  mkdir -p /root/models
+
+RUN \
+  mkdir -p /root/logs
+
+# Apache2
+RUN \
+  apt-get install -y apache2
+
+RUN \
+  a2enmod proxy \
+  && a2enmod proxy_http \
+  && a2dissite 000-default
+
+RUN \
+  mv /var/www/html /var/www/html.orig
+
+RUN \
+  mv /etc/apache2/apache2.conf /etc/apache2/apache2.conf.orig
+
+# All paths (dirs, not files) up to and including /root must have +x permissions.
+# It's just the way linux works.  Don't fight it.
+# http://askubuntu.com/questions/537032/how-to-configure-apache2-with-symbolic-links-in-var-www
+RUN \
+  chmod a+x /root
+
+RUN \
+  pip install pio-cli==0.47
+
+EXPOSE 80 50070 39000 9000 9001 9002 9003 9004 6006 8754 7077 6066 6060 6061 4040 4041 4042 4043 4044 2222
+  # 8000
+CMD ["supervise", "."]

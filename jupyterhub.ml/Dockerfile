@@ -1,4 +1,6 @@
-FROM fluxcapacitor/package-spark-2.0.1
+FROM fluxcapacitor/package-spark-2.1.0:master
+
+WORKDIR /root
 
 # Based on the following:  https://github.com/jupyterhub/jupyterhub/blob/master/Dockerfile
 
@@ -12,190 +14,110 @@ RUN apt-get -y update && \
 # libav-tools for matplotlib anim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libav-tools && \
-    apt-get clean 
+    apt-get clean
 #    rm -rf /var/lib/apt/lists/*
 
 # Install JupyterHub dependencies
 RUN npm install -g configurable-http-proxy && rm -rf ~/.npm
 
-WORKDIR /root
-
-# Install Python with conda
-RUN wget -q https://repo.continuum.io/miniconda/Miniconda3-4.1.11-Linux-x86_64.sh -O /tmp/miniconda.sh  && \
-    echo '874dbb0d3c7ec665adf7231bbb575ab2 */tmp/miniconda.sh' | md5sum -c - && \
-    bash /tmp/miniconda.sh -f -b -p /opt/conda && \
-    /opt/conda/bin/conda install --yes python=3.5 sqlalchemy tornado jinja2 traitlets requests pip && \
-    /opt/conda/bin/pip install --upgrade pip && \
-    rm /tmp/miniconda.sh
-
-ENV \
-  PATH=/opt/conda/bin:$PATH 
+RUN \
+  conda install --yes -c conda-forge jupyterhub==0.7.2 \
+  && conda install --yes ipykernel==4.6.0 \
+  && conda install --yes notebook==5.0.0 \
+  && conda install --yes -c conda-forge jupyter_contrib_nbextensions==0.2.7 \
+  && conda install --yes ipywidgets==6.0.0 \
+  && conda install --yes -c anaconda-nb-extensions anaconda-nb-extensions==1.0.0 \
+  && conda install --yes -c conda-forge findspark==1.0.0 
 
 RUN \
-  conda install --yes openblas scikit-learn numpy scipy ipython jupyter matplotlib pandas seaborn
-
-ENV \
- BAZEL_VERSION=0.4.4
-
-RUN \
-  mkdir /root/bazel \
-  && cd /root/bazel \
-  && curl -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh \
-  && curl -fSsL -o /root/bazel/LICENSE.txt https://raw.githubusercontent.com/bazelbuild/bazel/master/LICENSE.txt \
-  && chmod +x bazel-*.sh \
-  && ./bazel-$BAZEL_VERSION-installer-linux-x86_64.sh \
-  && rm bazel-$BAZEL_VERSION-installer-linux-x86_64.sh
-
-ENV \
-  TENSORFLOW_HOME=/root/tensorflow
-
-ENV \
- TENSORFLOW_VERSION=1.0.0
+  pip install jupyterlab==0.19.0 \
+  && pip install jupyterlab_widgets==0.6.15 \
+  && pip install widgetslabextension==0.1.0
 
 RUN \
-  git clone -b v$TENSORFLOW_VERSION https://github.com/tensorflow/tensorflow.git
-
-RUN \
-  cd $TENSORFLOW_HOME \
-  && printf "\n\n\n\n\ny\n\n\n\n" | ./configure
-
-RUN \
-  cd $TENSORFLOW_HOME \
-  && bazel build --config=opt //tensorflow/tools/pip_package:build_pip_package
-
-RUN \
-  cd $TENSORFLOW_HOME \
-  && bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg
-
-# Utility for optimizing/simplifying models for inference
-#RUN \
-#  cd $TENSORFLOW_HOME \
-#  && bazel build tensorflow/python/tools:optimize_for_inference
-
-#RUN \
-#  pip install --ignore-installed --upgrade pip setuptools \
-#  && pip install --upgrade tensorflow==$TENSORFLOW_VERSION
-
-RUN \
-  pip install /tmp/tensorflow_pkg/tensorflow-${TENSORFLOW_VERSION}-cp35-cp35m-linux_x86_64.whl
-
-RUN \
-  conda install --yes -c conda-forge py4j
-
-# Overcomes current limitation with conda matplotlib (1.5.1)
-RUN \
-  apt-get update \
-  && apt-get install -y python-qt4
-
-RUN \
-  echo "deb http://cran.rstudio.com/bin/linux/ubuntu trusty/" >> /etc/apt/sources.list \
-  && gpg --keyserver keyserver.ubuntu.com --recv-key E084DAB9 \
-  && gpg -a --export E084DAB9 | apt-key add - \
-  && apt-get update \
-  && apt-get install -y r-base \
-  && apt-get install -y r-base-dev
-
-# TODO:  Replace with conda version of SparkR:
-#          https://www.continuum.io/blog/developer-blog/anaconda-r-users-sparkr-and-rbokeh
-RUN \
-  apt-get install -y libcurl4-openssl-dev \
-  && apt-get install -y libzmq3 libzmq3-dev \
-  && apt-get install -y zip \
-  && ln -s /bin/tar /bin/gtar \
-  && R -e "install.packages(c('pbdZMQ','rzmq','repr', 'devtools'), type = 'source', repos = c('http://cran.us.r-project.org', 'http://irkernel.github.io/'))" \
-  && R -e "devtools::install_github('IRkernel/IRdisplay')" \
-  && R -e "devtools::install_github('IRkernel/IRkernel')" \
-  && R -e "IRkernel::installspec(user = FALSE)"
-
-RUN \
-  conda install --yes -c conda-forge jupyterhub=0.6.1 \
-  && conda install --yes -c conda-forge ipykernel=4.5.0 \
-  && conda install --yes -c conda-forge notebook=4.2.3 \
-  && conda install --yes -c conda-forge findspark=1.0.0 \
-  && conda install --yes -c conda-forge jupyter_contrib_nbextensions \
-  && conda install --yes -c anaconda-nb-extensions anaconda-nb-extensions 
+  jupyter labextension install --sys-prefix --py jupyterlab_widgets \
+  && jupyter labextension enable --sys-prefix --py jupyterlab_widgets \
+  && jupyter serverextension enable --py jupyterlab --sys-prefix
 
 # Install non-secure dummyauthenticator for jupyterhub (dev purposes only)
 RUN \
-  pip install jupyterhub-dummyauthenticator
+  pip install jupyterhub-dummyauthenticator==0.1
 
-ENV KUBERNETES_VERSION=1.5.1
+RUN \
+  pip install oauthenticator==0.5.1
+
+RUN \
+  pip install jupyterhub-simplespawner==0.1
+
+RUN \
+  conda install --yes nbconvert==5.1.1 \
+  && conda install --yes graphviz==2.38.0 \
+  && conda install --yes seaborn==0.7.1
+
+ENV KUBERNETES_VERSION=1.6.2
 
 RUN \
   wget https://storage.googleapis.com/kubernetes-release/release/v$KUBERNETES_VERSION/bin/linux/amd64/kubectl
 
 RUN \
-  sudo chmod a+x kubectl \
-  && sudo mv kubectl /usr/local/bin/kubectl
-
-RUN \
-  pip install jupyterhub-simplespawner
+  chmod a+x kubectl \
+  && mv kubectl /usr/local/bin/kubectl
 
 RUN \
   mkdir -p /root/tensorboard
 
-COPY .kube/ .kube/
+RUN \
+  mkdir -p /root/models
+
+RUN \
+  mkdir -p /root/logs
+
+# lib & notesbooks provided via Kubernets PersistentVolume Mount
+# from the github.com/fluxcapacitor/source.ml repo -> /root/pipeline
+# .kube/config is volume mounted from Kubernetes secret
+
+COPY config/jupyterhub/ config/jupyterhub/
+COPY profiles/ /root/.ipython/
+COPY img/ img/
+
+ENV \
+ TENSORFLOW_VERSION=1.1.0
+
+RUN \
+  pip install tensorflow==$TENSORFLOW_VERSION
+
+RUN \
+  pip install git+https://github.com/jupyterhub/kubespawner
+
+RUN \
+  conda config --add channels r && \
+  conda install --quiet --yes \
+    'r-base=3.3.2' \
+    'r-irkernel=0.7*' \
+    'r-plyr=1.8*' \
+    'r-devtools=1.12*' \
+    'r-tidyverse=1.0*' \
+    'r-shiny=0.14*' \
+    'r-rmarkdown=1.2*' \
+    'r-forecast=7.3*' \
+    'r-rsqlite=1.1*' \
+    'r-reshape2=1.4*' \
+    'r-nycflights13=0.2*' \
+    'r-caret=6.0*' \
+    'r-rcurl=1.95*' \
+    'r-crayon=1.3*' \
+    'r-randomforest=4.6*' && conda clean -tipsy
+
+
+COPY share/ share/
+
+RUN \
+  mv /opt/conda/share/jupyter/hub/templates/login.html /opt/conda/share/jupyter/hub/templates/login.html.orig \
+  && cd /opt/conda/share/jupyter/hub/templates/ \
+  && ln -s ~/share/jupyter/hub/templates/login.html
+
+EXPOSE 6006 8754 8755
 
 COPY run run
-COPY config/jupyterhub/ config/jupyterhub/
-
-COPY lib/ lib/
-
-RUN \
-  git clone https://github.com/fluxcapacitor/pipeline
-
-RUN \
-  ln -s /root/pipeline/jupyterhub.ml/notebooks 
-
-RUN \
-  ln -s /root/pipeline/jupyterhub.ml/scripts
-
-COPY profiles/ /root/.ipython/ 
-
-ENV \
-  HADOOP_VERSION=2.7.2
-
-RUN \
- wget http://www.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz \
- && tar xvzf hadoop-${HADOOP_VERSION}.tar.gz \
- && rm hadoop-${HADOOP_VERSION}.tar.gz
-
-ENV \
-  HADOOP_HOME=/root/hadoop-${HADOOP_VERSION} \
-  HADOOP_OPTS=-Djava.net.preferIPv4Stack=true
-
-# This must be separate from the ${HADOOP_HOME} ENV definition or else Docker doesn't recognize it
-ENV \
-  HADOOP_CONF=${HADOOP_HOME}/etc/hadoop/ \
-  PATH=${HADOOP_HOME}/bin:${HADOOP_HOME}/sbin:${PATH} 
-
-# Required by Tensorflow
-ENV \
-  HADOOP_HDFS_HOME=${HADOOP_HOME}
-  
-# Required by Tensorflow for HDFS
-RUN \
-  echo 'export CLASSPATH=$(${HADOOP_HDFS_HOME}/bin/hadoop classpath --glob)' >> /root/.bashrc
- 
-ENV \
-  LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${JAVA_HOME}/jre/lib/amd64/server
-
-# Required by Spark
-ENV \
-  HADOOP_CONF_DIR=${HADOOP_CONF}
-
-COPY config/hdfs/ conf/
-
-RUN \
-  mv ${HADOOP_CONF}/core-site.xml ${HADOOP_CONF}/core-site.xml.orig \
-  && cd ${HADOOP_CONF} \
-  && ln -s ~/conf/core-site.xml
-
-RUN \
-  mv ${HADOOP_CONF}/hdfs-site.xml ${HADOOP_CONF}/hdfs-site.xml.orig \
-  && cd ${HADOOP_CONF} \
-  && ln -s ~/conf/hdfs-site.xml
-
-EXPOSE 6006 8754
 
 CMD ["supervise", "."]

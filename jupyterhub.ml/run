@@ -1,7 +1,17 @@
 #!/bin/bash
 
+if [ ! -f ~/notebooks ]; then
+  cd ~ && ln -s /root/volumes/source.ml/jupyterhub.ml/notebooks
+fi
+
+if [ ! -f ~/lib ]; then
+  cd ~ && ln -s /root/volumes/source.ml/jupyterhub.ml/lib
+fi
+
+export CLASSPATH=$(${HADOOP_HDFS_HOME}/bin/hadoop classpath --glob)
+
 cd ~
 tensorboard --host=0.0.0.0 --logdir=/root/tensorboard &
 
-cd ~ 
+cd ~
 jupyterhub --ip='' --config=config/jupyterhub/jupyterhub_config.py
